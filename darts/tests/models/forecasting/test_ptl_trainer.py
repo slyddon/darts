@@ -11,7 +11,7 @@ if not TORCH_AVAILABLE:
     )
 import pytorch_lightning as pl
 
-from darts.models.forecasting.rnn_model import RNNModel
+from darts.models.forecasting.torch.rnn_model import RNNModel
 
 
 class TestPTLTrainer:

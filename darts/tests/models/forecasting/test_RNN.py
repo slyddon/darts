@@ -12,7 +12,11 @@ if not TORCH_AVAILABLE:
     )
 import torch.nn as nn
 
-from darts.models.forecasting.rnn_model import CustomRNNModule, RNNModel, _RNNModule
+from darts.models.forecasting.torch.rnn_model import (
+    CustomRNNModule,
+    RNNModel,
+    _RNNModule,
+)
 
 
 class ModuleValid1(_RNNModule):

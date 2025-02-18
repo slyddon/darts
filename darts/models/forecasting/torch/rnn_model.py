@@ -12,11 +12,13 @@ import torch
 import torch.nn as nn
 
 from darts.logging import get_logger, raise_if_not, raise_log
-from darts.models.forecasting.pl_forecasting_module import (
+from darts.models.forecasting.torch.pl_forecasting_module import (
     PLDualCovariatesModule,
     io_processor,
 )
-from darts.models.forecasting.torch_forecasting_model import DualCovariatesTorchModel
+from darts.models.forecasting.torch.torch_forecasting_model import (
+    DualCovariatesTorchModel,
+)
 from darts.timeseries import TimeSeries
 from darts.utils.data import DualCovariatesShiftedDataset, TrainingDataset
 

@@ -1,13 +1,15 @@
+import importlib.util
+
 from darts.logging import get_logger, raise_log
 
 logger = get_logger(__name__)
 
-try:
-    import torch  # noqa: F401
 
-    TORCH_AVAILABLE = True
-except ImportError:
-    TORCH_AVAILABLE = False
+def _is_package_available(name: str) -> bool:
+    return importlib.util.find_spec(name) is not None
+
+
+TORCH_AVAILABLE = _is_package_available("torch")
 
 
 class NotImportedModule:

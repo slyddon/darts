@@ -17,7 +17,7 @@ from darts.models.components.transformer import (
     CustomFeedForwardDecoderLayer,
     CustomFeedForwardEncoderLayer,
 )
-from darts.models.forecasting.transformer_model import (
+from darts.models.forecasting.torch.transformer_model import (
     TransformerModel,
     _TransformerModule,
 )

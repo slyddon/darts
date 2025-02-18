@@ -16,11 +16,13 @@ from darts.models.components.transformer import (
     CustomFeedForwardDecoderLayer,
     CustomFeedForwardEncoderLayer,
 )
-from darts.models.forecasting.pl_forecasting_module import (
+from darts.models.forecasting.torch.pl_forecasting_module import (
     PLPastCovariatesModule,
     io_processor,
 )
-from darts.models.forecasting.torch_forecasting_model import PastCovariatesTorchModel
+from darts.models.forecasting.torch.torch_forecasting_model import (
+    PastCovariatesTorchModel,
+)
 from darts.utils.torch import MonteCarloDropout
 
 logger = get_logger(__name__)

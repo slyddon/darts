@@ -9,11 +9,13 @@ import torch
 import torch.nn as nn
 
 from darts.logging import raise_if
-from darts.models.forecasting.pl_forecasting_module import (
+from darts.models.forecasting.torch.pl_forecasting_module import (
     PLMixedCovariatesModule,
     io_processor,
 )
-from darts.models.forecasting.torch_forecasting_model import MixedCovariatesTorchModel
+from darts.models.forecasting.torch.torch_forecasting_model import (
+    MixedCovariatesTorchModel,
+)
 
 MixedCovariatesTrainTensorType = tuple[
     torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor

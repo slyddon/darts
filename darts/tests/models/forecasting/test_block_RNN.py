@@ -12,7 +12,7 @@ if not TORCH_AVAILABLE:
     )
 import torch.nn as nn
 
-from darts.models.forecasting.block_rnn_model import (
+from darts.models.forecasting.torch.block_rnn_model import (
     BlockRNNModel,
     CustomBlockRNNModule,
     _BlockRNNModule,

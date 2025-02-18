@@ -29,11 +29,13 @@ from torch import nn
 
 from darts.logging import get_logger, raise_log
 from darts.models.components import layer_norm_variants
-from darts.models.forecasting.pl_forecasting_module import (
+from darts.models.forecasting.torch.pl_forecasting_module import (
     PLMixedCovariatesModule,
     io_processor,
 )
-from darts.models.forecasting.torch_forecasting_model import MixedCovariatesTorchModel
+from darts.models.forecasting.torch.torch_forecasting_model import (
+    MixedCovariatesTorchModel,
+)
 from darts.utils.torch import MonteCarloDropout
 
 MixedCovariatesTrainTensorType = tuple[

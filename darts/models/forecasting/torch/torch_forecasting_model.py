@@ -53,7 +53,7 @@ from darts.models.forecasting.forecasting_model import (
     ForecastingModel,
     GlobalForecastingModel,
 )
-from darts.models.forecasting.pl_forecasting_module import PLForecastingModule
+from darts.models.forecasting.torch.pl_forecasting_module import PLForecastingModule
 from darts.timeseries import TimeSeries
 from darts.utils.data.inference_dataset import (
     DualCovariatesInferenceDataset,

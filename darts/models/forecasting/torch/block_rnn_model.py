@@ -1,282 +1,233 @@
 """
-Temporal Convolutional Network
-------------------------------
+Block Recurrent Neural Networks
+-------------------------------
 """
 
-import math
-from collections.abc import Sequence
-from typing import Optional
+import inspect
+from abc import ABC, abstractmethod
+from typing import Optional, Union
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
-from darts.logging import get_logger, raise_if_not
-from darts.models.forecasting.pl_forecasting_module import (
+from darts.logging import get_logger, raise_log
+from darts.models.forecasting.torch.pl_forecasting_module import (
     PLPastCovariatesModule,
     io_processor,
 )
-from darts.models.forecasting.torch_forecasting_model import PastCovariatesTorchModel
-from darts.timeseries import TimeSeries
-from darts.utils.data import PastCovariatesShiftedDataset
-from darts.utils.torch import MonteCarloDropout
+from darts.models.forecasting.torch.torch_forecasting_model import (
+    PastCovariatesTorchModel,
+)
 
 logger = get_logger(__name__)
 
 
-class _ResidualBlock(nn.Module):
+class CustomBlockRNNModule(PLPastCovariatesModule, ABC):
     def __init__(
         self,
-        num_filters: int,
-        kernel_size: int,
-        dilation_base: int,
-        dropout: float,
-        weight_norm: bool,
-        nr_blocks_below: int,
+        input_size: int,
+        hidden_dim: int,
         num_layers: int,
-        input_size: int,
-        target_size: int,
-    ):
-        """PyTorch module implementing a residual block module used in `_TCNModule`.
-
-        Parameters
-        ----------
-        num_filters
-            The number of filters in a convolutional layer of the TCN.
-        kernel_size
-            The size of every kernel in a convolutional layer.
-        dilation_base
-            The base of the exponent that will determine the dilation on every level.
-        dropout
-            The dropout to be applied to every convolutional layer.
-        weight_norm
-            Boolean value indicating whether to use weight normalization.
-        nr_blocks_below
-            The number of residual blocks before the current one.
-        num_layers
-            The number of convolutional layers.
-        input_size
-            The dimensionality of the input time series of the whole network.
-        target_size
-            The dimensionality of the output time series of the whole network.
-
-        Inputs
-        ------
-        x of shape `(batch_size, in_dimension, input_chunk_length)`
-            Tensor containing the features of the input sequence.
-            in_dimension is equal to `input_size` if this is the first residual block,
-            in all other cases it is equal to `num_filters`.
-
-        Outputs
-        -------
-        y of shape `(batch_size, out_dimension, input_chunk_length)`
-            Tensor containing the output sequence of the residual block.
-            out_dimension is equal to `output_size` if this is the last residual block,
-            in all other cases it is equal to `num_filters`.
-        """
-        super().__init__()
-
-        self.dilation_base = dilation_base
-        self.kernel_size = kernel_size
-        self.dropout1 = MonteCarloDropout(dropout)
-        self.dropout2 = MonteCarloDropout(dropout)
-        self.num_layers = num_layers
-        self.nr_blocks_below = nr_blocks_below
-
-        input_dim = input_size if nr_blocks_below == 0 else num_filters
-        output_dim = target_size if nr_blocks_below == num_layers - 1 else num_filters
-        self.conv1 = nn.Conv1d(
-            input_dim,
-            num_filters,
-            kernel_size,
-            dilation=(dilation_base**nr_blocks_below),
-        )
-        self.conv2 = nn.Conv1d(
-            num_filters,
-            output_dim,
-            kernel_size,
-            dilation=(dilation_base**nr_blocks_below),
-        )
-        if weight_norm:
-            self.conv1, self.conv2 = (
-                nn.utils.parametrizations.weight_norm(self.conv1),
-                nn.utils.parametrizations.weight_norm(self.conv2),
-            )
-
-        if input_dim != output_dim:
-            self.conv3 = nn.Conv1d(input_dim, output_dim, 1)
-
-    def forward(self, x):
-        residual = x
-
-        # first step
-        left_padding = (self.dilation_base**self.nr_blocks_below) * (
-            self.kernel_size - 1
-        )
-        x = F.pad(x, (left_padding, 0))
-        x = self.dropout1(F.relu(self.conv1(x)))
-
-        # second step
-        x = F.pad(x, (left_padding, 0))
-        x = self.conv2(x)
-        if self.nr_blocks_below < self.num_layers - 1:
-            x = F.relu(x)
-        x = self.dropout2(x)
-
-        # add residual
-        if self.conv1.in_channels != self.conv2.out_channels:
-            residual = self.conv3(residual)
-        x = x + residual
-
-        return x
-
-
-class _TCNModule(PLPastCovariatesModule):
-    def __init__(
-        self,
-        input_size: int,
-        kernel_size: int,
-        num_filters: int,
-        num_layers: Optional[int],
-        dilation_base: int,
-        weight_norm: bool,
         target_size: int,
         nr_params: int,
-        target_length: int,
-        dropout: float,
+        num_layers_out_fc: Optional[list] = None,
+        dropout: float = 0.0,
+        activation: str = "ReLU",
         **kwargs,
     ):
-        """PyTorch module implementing a dilated TCN module used in `TCNModel`.
+        """This class allows to create custom block RNN modules that can later be used with Darts'
+        :class:`BlockRNNModel`. It adds the backbone that is required to be used with Darts'
+        :class:`TorchForecastingModel` and :class:`BlockRNNModel`.
 
+        To create a new module, subclass from :class:`CustomBlockRNNModule` and:
+
+        * Define the architecture in the module constructor (`__init__()`)
+
+        * Add the `forward()` method and define the logic of your module's forward pass
+
+        * Use the custom module class when creating a new :class:`BlockRNNModel` with parameter `model`.
+
+        You can use `darts.models.forecasting.block_rnn_model._BlockRNNModule` as an example.
 
         Parameters
         ----------
         input_size
             The dimensionality of the input time series.
+        hidden_dim
+            The number of features in the hidden state `h` of the RNN module.
+        num_layers
+            The number of recurrent layers.
         target_size
             The dimensionality of the output time series.
         nr_params
             The number of parameters of the likelihood (or 1 if no likelihood is used).
-        target_length
-            Number of time steps the torch module will predict into the future at once.
-        kernel_size
-            The size of every kernel in a convolutional layer.
-        num_filters
-            The number of filters in a convolutional layer of the TCN.
-        num_layers
-            The number of convolutional layers.
-        weight_norm
-            Boolean value indicating whether to use weight normalization.
-        dilation_base
-            The base of the exponent that will determine the dilation on every level.
+        num_layers_out_fc
+            A list containing the dimensions of the hidden layers of the fully connected NN.
+            This network connects the last hidden layer of the PyTorch RNN module to the output.
         dropout
-            The dropout rate for every convolutional layer.
+            The fraction of neurons that are dropped in all-but-last RNN layers.
+        activation
+            The name of the activation function to be applied between the layers of the fully connected network.
         **kwargs
             all parameters required for :class:`darts.models.forecasting.pl_forecasting_module.PLForecastingModule`
             base class.
-
-        Inputs
-        ------
-        x of shape `(batch_size, input_chunk_length, input_size)`
-            Tensor containing the features of the input sequence.
-
-        Outputs
-        -------
-        y of shape `(batch_size, input_chunk_length, target_size, nr_params)`
-            Tensor containing the predictions of the next 'output_chunk_length' points in the last
-            'output_chunk_length' entries of the tensor. The entries before contain the data points
-            leading up to the first prediction, all in chronological order.
         """
-
         super().__init__(**kwargs)
 
         # Defining parameters
         self.input_size = input_size
-        self.n_filters = num_filters
-        self.kernel_size = kernel_size
-        self.target_length = target_length
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
         self.target_size = target_size
         self.nr_params = nr_params
-        self.dilation_base = dilation_base
+        self.num_layers_out_fc = [] if num_layers_out_fc is None else num_layers_out_fc
+        self.dropout = dropout
+        self.activation = activation
+        self.out_len = self.output_chunk_length
 
-        # If num_layers is not passed, compute number of layers needed for full history coverage
-        if num_layers is None and dilation_base > 1:
-            num_layers = math.ceil(
-                math.log(
-                    (self.input_chunk_length - 1)
-                    * (dilation_base - 1)
-                    / (kernel_size - 1)
-                    / 2
-                    + 1,
-                    dilation_base,
-                )
-            )
-            logger.info("Number of layers chosen: " + str(num_layers))
-        elif num_layers is None:
-            num_layers = math.ceil(
-                (self.input_chunk_length - 1) / (kernel_size - 1) / 2
-            )
-            logger.info("Number of layers chosen: " + str(num_layers))
-        self.num_layers = num_layers
+    @io_processor
+    @abstractmethod
+    def forward(self, x_in: tuple) -> torch.Tensor:
+        """BlockRNN Module forward.
 
-        # Building TCN module
-        self.res_blocks_list = []
-        for i in range(num_layers):
-            res_block = _ResidualBlock(
-                num_filters=num_filters,
-                kernel_size=kernel_size,
-                dilation_base=dilation_base,
-                dropout=dropout,
-                weight_norm=weight_norm,
-                nr_blocks_below=i,
-                num_layers=num_layers,
-                input_size=self.input_size,
-                target_size=target_size * nr_params,
-            )
-            self.res_blocks_list.append(res_block)
-        self.res_blocks = nn.ModuleList(self.res_blocks_list)
+        Parameters
+        ----------
+        x_in
+            Tuple of Tensors containing the features of the input sequence. The tuple has elements
+            (past target, historic future covariates, future covariates, static covariates).
+            The shape of the past target is `(batch_size, input_length, input_size)`.
+
+        Returns
+        -------
+        torch.Tensor
+            The BlockRNN output Tensor with shape `(batch_size, output_chunk_length, target_size, nr_params)`.
+            It contains the prediction at the last time step of the sequence.
+        """
+        pass
+
+
+# TODO add batch norm
+class _BlockRNNModule(CustomBlockRNNModule):
+    def __init__(
+        self,
+        name: str,
+        activation: Optional[str] = None,
+        **kwargs,
+    ):
+        """PyTorch module implementing a block RNN to be used in `BlockRNNModel`.
+
+        PyTorch module implementing a simple block RNN with the specified `name` layer.
+        This module combines a PyTorch RNN module, together with a fully connected network, which maps the
+        last hidden layers to output of the desired size `output_chunk_length` and makes it compatible with
+        `BlockRNNModel`s.
+
+        This module uses an RNN to encode the input sequence, and subsequently uses a fully connected
+        network as the decoder which takes as input the last hidden state of the encoder RNN.
+        Optionally, a non-linear activation function can be applied between the layers of the fully connected network.
+        The final output of the decoder is a sequence of length `output_chunk_length`. In this sense,
+        the `_BlockRNNModule` produces 'blocks' of forecasts at a time (which is different
+        from `_RNNModule` used by the `RNNModel`).
+
+        Parameters
+        ----------
+        name
+            The name of the specific PyTorch RNN module ("RNN", "GRU" or "LSTM").
+        activation
+            The name of the activation function to be applied between the layers of the fully connected network.
+            Options include "ReLU", "Sigmoid", "Tanh", or None for no activation. Default: None.
+        **kwargs
+            all parameters required for the :class:`darts.models.forecasting.CustomBlockRNNModule` base class.
+
+        Inputs
+        ------
+        x of shape `(batch_size, input_chunk_length, input_size, nr_params)`
+            Tensor containing the features of the input sequence.
+
+        Outputs
+        -------
+        y of shape `(batch_size, output_chunk_length, target_size, nr_params)`
+            Tensor containing the prediction at the last time step of the sequence.
+        """
+
+        super().__init__(**kwargs)
+
+        self.name = name
+
+        # Defining the RNN module
+        self.rnn = getattr(nn, self.name)(
+            self.input_size,
+            self.hidden_dim,
+            self.num_layers,
+            batch_first=True,
+            dropout=self.dropout,
+        )
+
+        # The RNN module is followed by a fully connected layer, which maps the last hidden layer
+        # to the output of desired length
+        last = self.hidden_dim
+        feats = []
+        for index, feature in enumerate(
+            self.num_layers_out_fc + [self.out_len * self.target_size * self.nr_params]
+        ):
+            feats.append(nn.Linear(last, feature))
+
+            # Add activation only between layers, but not on the final layer
+            if activation and index < len(self.num_layers_out_fc):
+                activation_function = getattr(nn, activation)()
+                feats.append(activation_function)
+            last = feature
+        self.fc = nn.Sequential(*feats)
 
     @io_processor
     def forward(self, x_in: tuple):
         x, _ = x_in
         # data is of size (batch_size, input_chunk_length, input_size)
         batch_size = x.size(0)
-        x = x.transpose(1, 2)
 
-        for res_block in self.res_blocks_list:
-            x = res_block(x)
+        out, hidden = self.rnn(x)
 
-        x = x.transpose(1, 2)
-        x = x.view(
-            batch_size, self.input_chunk_length, self.target_size, self.nr_params
+        """ Here, we apply the FC network only on the last output point (at the last time step)
+        """
+        if self.name == "LSTM":
+            hidden = hidden[0]
+        predictions = hidden[-1, :, :]
+        predictions = self.fc(predictions)
+        predictions = predictions.view(
+            batch_size, self.out_len, self.target_size, self.nr_params
         )
 
-        return x
-
-    @property
-    def first_prediction_index(self) -> int:
-        return -self.output_chunk_length
+        # predictions is of size (batch_size, output_chunk_length, 1)
+        return predictions
 
 
-class TCNModel(PastCovariatesTorchModel):
+class BlockRNNModel(PastCovariatesTorchModel):
     def __init__(
         self,
         input_chunk_length: int,
         output_chunk_length: int,
         output_chunk_shift: int = 0,
-        kernel_size: int = 3,
-        num_filters: int = 3,
-        num_layers: Optional[int] = None,
-        dilation_base: int = 2,
-        weight_norm: bool = False,
-        dropout: float = 0.2,
+        model: Union[str, type[CustomBlockRNNModule]] = "RNN",
+        hidden_dim: int = 25,
+        n_rnn_layers: int = 1,
+        hidden_fc_sizes: Optional[list] = None,
+        dropout: float = 0.0,
+        activation: str = "ReLU",
         **kwargs,
     ):
-        """Temporal Convolutional Network Model (TCN).
+        """Block Recurrent Neural Network Model (RNNs).
 
-        This is an implementation of a dilated TCN used for forecasting, inspired from [1]_.
+        This is a neural network model that uses an RNN encoder to encode fixed-length input chunks, and
+        a fully connected network to produce fixed-length outputs.
 
         This model supports past covariates (known for `input_chunk_length` points before prediction time).
+
+        This class provides three variants of RNNs:
+
+        * Vanilla RNN
+
+        * LSTM
+
+        * GRU
 
         Parameters
         ----------
@@ -297,20 +248,21 @@ class TCNModel(PastCovariatesTorchModel):
             `future_covariates`, the future values are extracted from the shifted output chunk. Predictions will start
             `output_chunk_shift` steps after the end of the target `series`. If `output_chunk_shift` is set, the model
             cannot generate autoregressive predictions (`n > output_chunk_length`).
-        kernel_size
-            The size of every kernel in a convolutional layer.
-        num_filters
-            The number of filters in a convolutional layer of the TCN.
-        weight_norm
-            Boolean value indicating whether to use weight normalization.
-        dilation_base
-            The base of the exponent that will determine the dilation on every level.
-        num_layers
-            The number of convolutional layers.
+        model
+            Either a string specifying the RNN module type ("RNN", "LSTM" or "GRU"), or a subclass of
+            :class:`CustomBlockRNNModule` (the class itself, not an object of the class) with a custom logic.
+        hidden_dim
+            Size for feature maps for each hidden RNN layer (:math:`h_n`).
+            In Darts version <= 0.21, hidden_dim was referred as hidden_size.
+        n_rnn_layers
+            Number of layers in the RNN module.
+        hidden_fc_sizes
+            Sizes of hidden layers connecting the last hidden layer of the RNN module to the output, if any.
         dropout
-            The dropout rate for every convolutional layer. This is compatible with Monte Carlo dropout
-            at inference time for model uncertainty estimation (enabled with ``mc_dropout=True`` at
-            prediction time).
+            Fraction of neurons affected by Dropout.
+        activation
+            The name of a torch.nn activation function to be applied between the layers of the fully connected network.
+            Default: "ReLU".
         **kwargs
             Optional arguments to initialize the pytorch_lightning.Module, pytorch_lightning.Trainer, and
             Darts' :class:`TorchForecastingModel`.
@@ -337,7 +289,7 @@ class TCNModel(PastCovariatesTorchModel):
         lr_scheduler_kwargs
             Optionally, some keyword arguments for the PyTorch learning rate scheduler. Default: ``None``.
         use_reversible_instance_norm
-            Whether to use reversible instance normalization `RINorm` against distribution shift as shown in [2]_.
+            Whether to use reversible instance normalization `RINorm` against distribution shift as shown in [1]_.
             It is only applied to the features of the target series and not the covariates.
         batch_size
             Number of time series (input and output sequences) used in each training pass. Default: ``32``.
@@ -405,7 +357,6 @@ class TCNModel(PastCovariatesTorchModel):
             supported kwargs. Default: ``None``.
             Running on GPU(s) is also possible using ``pl_trainer_kwargs`` by specifying keys ``"accelerator",
             "devices", and "auto_select_gpus"``. Some examples for setting the devices inside the ``pl_trainer_kwargs``
-            dict:rgs``
             dict:
 
             - ``{"accelerator": "cpu"}`` for CPU,
@@ -448,62 +399,63 @@ class TCNModel(PastCovariatesTorchModel):
 
         References
         ----------
-        .. [1] https://arxiv.org/abs/1803.01271
-        .. [2] T. Kim et al. "Reversible Instance Normalization for Accurate Time-Series Forecasting against
+        .. [1] T. Kim et al. "Reversible Instance Normalization for Accurate Time-Series Forecasting against
                 Distribution Shift", https://openreview.net/forum?id=cGDAkQo1C0p
 
         Examples
         --------
         >>> from darts.datasets import WeatherDataset
-        >>> from darts.models import TCNModel
+        >>> from darts.models import BlockRNNModel
         >>> series = WeatherDataset().load()
         >>> # predicting atmospheric pressure
         >>> target = series['p (mbar)'][:100]
         >>> # optionally, use past observed rainfall (pretending to be unknown beyond index 100)
         >>> past_cov = series['rain (mm)'][:100]
-        >>> # `output_chunk_length` must be strictly smaller than `input_chunk_length`
-        >>> model = TCNModel(
+        >>> # predict 6 pressure values using the 12 past values of pressure and rainfall, as well as the 6 temperature
+        >>> model = BlockRNNModel(
         >>>     input_chunk_length=12,
         >>>     output_chunk_length=6,
-        >>>     n_epochs=20,
+        >>>     n_rnn_layers=2,
+        >>>     n_epochs=50,
         >>> )
         >>> model.fit(target, past_covariates=past_cov)
         >>> pred = model.predict(6)
         >>> pred.values()
-        array([[-80.48476824],
-               [-80.47896667],
-               [-41.77135603],
-               [-41.76158729],
-               [-41.76854107],
-               [-41.78166819]])
+        array([[4.97979827],
+               [3.9707572 ],
+               [5.27869295],
+               [5.19697244],
+               [5.28424783],
+               [5.22497681]])
 
         .. note::
-            `DeepTCN example notebook <https://unit8co.github.io/darts/examples/09-DeepTCN-examples.html>`_ presents
-            techniques that can be used to improve the forecasts quality compared to this simple usage example.
+            `RNN example notebook <https://unit8co.github.io/darts/examples/04-RNN-examples.html>`_ presents techniques
+            that can be used to improve the forecasts quality compared to this simple usage example.
         """
-
-        raise_if_not(
-            kernel_size < input_chunk_length,
-            "The kernel size must be strictly smaller than the input length.",
-            logger,
-        )
-        raise_if_not(
-            output_chunk_length < input_chunk_length,
-            "The output length must be strictly smaller than the input length",
-            logger,
-        )
-
         super().__init__(**self._extract_torch_model_params(**self.model_params))
 
         # extract pytorch lightning module kwargs
         self.pl_module_params = self._extract_pl_module_params(**self.model_params)
 
-        self.kernel_size = kernel_size
-        self.num_filters = num_filters
-        self.num_layers = num_layers
-        self.dilation_base = dilation_base
+        # check we got right model type specified:
+        if model not in ["RNN", "LSTM", "GRU"]:
+            if not inspect.isclass(model) or not issubclass(
+                model, CustomBlockRNNModule
+            ):
+                raise_log(
+                    ValueError(
+                        "`model` is not a valid RNN model. Please specify 'RNN', 'LSTM', 'GRU', or give a subclass "
+                        "(not an instance) of darts.models.forecasting.rnn_model.CustomBlockRNNModule."
+                    ),
+                    logger=logger,
+                )
+
+        self.rnn_type_or_module = model
+        self.hidden_fc_sizes = hidden_fc_sizes
+        self.hidden_dim = hidden_dim
+        self.n_rnn_layers = n_rnn_layers
         self.dropout = dropout
-        self.weight_norm = weight_norm
+        self.activation = activation
 
     @property
     def supports_multivariate(self) -> bool:
@@ -517,34 +469,31 @@ class TCNModel(PastCovariatesTorchModel):
         output_dim = train_sample[-1].shape[1]
         nr_params = 1 if self.likelihood is None else self.likelihood.num_parameters
 
-        return _TCNModule(
+        hidden_fc_sizes = [] if self.hidden_fc_sizes is None else self.hidden_fc_sizes
+
+        kwargs = {}
+        if isinstance(self.rnn_type_or_module, str):
+            model_cls = _BlockRNNModule
+            kwargs["name"] = self.rnn_type_or_module
+        else:
+            model_cls = self.rnn_type_or_module
+        return model_cls(
             input_size=input_dim,
             target_size=output_dim,
             nr_params=nr_params,
-            kernel_size=self.kernel_size,
-            num_filters=self.num_filters,
-            num_layers=self.num_layers,
-            dilation_base=self.dilation_base,
-            target_length=self.output_chunk_length,
+            hidden_dim=self.hidden_dim,
+            num_layers=self.n_rnn_layers,
+            num_layers_out_fc=hidden_fc_sizes,
             dropout=self.dropout,
-            weight_norm=self.weight_norm,
+            activation=self.activation,
             **self.pl_module_params,
+            **kwargs,
         )
 
-    def _build_train_dataset(
-        self,
-        target: Sequence[TimeSeries],
-        past_covariates: Optional[Sequence[TimeSeries]],
-        future_covariates: Optional[Sequence[TimeSeries]],
-        sample_weight: Optional[Sequence[TimeSeries]],
-        max_samples_per_ts: Optional[int],
-    ) -> PastCovariatesShiftedDataset:
-        return PastCovariatesShiftedDataset(
-            target_series=target,
-            covariates=past_covariates,
-            length=self.input_chunk_length,
-            shift=self.output_chunk_length + self.output_chunk_shift,
-            max_samples_per_ts=max_samples_per_ts,
-            use_static_covariates=self.uses_static_covariates,
-            sample_weight=sample_weight,
-        )
+    def _check_ckpt_parameters(self, tfm_save):
+        # new parameters were added that will break loading weights
+        new_params = ["activation"]
+        for param in new_params:
+            if param not in tfm_save.model_params:
+                tfm_save.model_params[param] = "ReLU"
+        super()._check_ckpt_parameters(tfm_save)

@@ -14,7 +14,10 @@ import numpy as np
 from catboost import CatBoostRegressor, Pool
 
 from darts.logging import get_logger
-from darts.models.forecasting.regression_model import RegressionModel, _LikelihoodMixin
+from darts.models.forecasting.regression.regression_model import (
+    RegressionModel,
+    _LikelihoodMixin,
+)
 from darts.timeseries import TimeSeries
 
 logger = get_logger(__name__)

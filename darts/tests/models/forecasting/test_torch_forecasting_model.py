@@ -49,7 +49,7 @@ from darts.models import (
     TSMixerModel,
 )
 from darts.models.components.layer_norm_variants import RINorm
-from darts.models.forecasting.global_baseline_models import _GlobalNaiveModel
+from darts.models.forecasting.torch.global_baseline_models import _GlobalNaiveModel
 from darts.utils.likelihood_models import (
     CauchyLikelihood,
     GaussianLikelihood,

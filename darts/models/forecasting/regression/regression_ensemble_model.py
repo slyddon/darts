@@ -11,8 +11,10 @@ from typing import Optional, Union
 from darts.logging import get_logger, raise_if, raise_if_not
 from darts.models.forecasting.ensemble_model import EnsembleModel
 from darts.models.forecasting.forecasting_model import ForecastingModel
-from darts.models.forecasting.linear_regression_model import LinearRegressionModel
-from darts.models.forecasting.regression_model import RegressionModel
+from darts.models.forecasting.regression.linear_regression_model import (
+    LinearRegressionModel,
+)
+from darts.models.forecasting.regression.regression_model import RegressionModel
 from darts.timeseries import TimeSeries, concatenate
 from darts.utils.ts_utils import seq2series, series2seq
 

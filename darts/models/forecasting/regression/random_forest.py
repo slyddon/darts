@@ -1,31 +1,35 @@
 """
-Linear Regression model
------------------------
+Random Forest
+-------------
 
-A forecasting model using a linear regression of some of the target series' lags, as well as optionally some
-covariate series lags in order to obtain a forecast.
+A forecasting model using a random forest regression. It uses some of the target series' lags, as well as optionally
+some covariate series lags in order to obtain a forecast.
+
+See [1]_ for a reference around random forests.
+
+The implementations is wrapped around `RandomForestRegressor
+<https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.RandomForestRegressor.html#sklearn.ensemble.RandomForestRegressor>`_.
+
+References
+----------
+.. [1] https://en.wikipedia.org/wiki/Random_forest
 """
 
-from collections.abc import Sequence
-from typing import Optional, Union
+from typing import Optional
 
-import numpy as np
-from scipy.optimize import linprog
-from sklearn.linear_model import LinearRegression, PoissonRegressor, QuantileRegressor
+from sklearn.ensemble import RandomForestRegressor
 
 from darts.logging import get_logger
-from darts.models.forecasting.regression_model import (
+from darts.models.forecasting.regression.regression_model import (
     FUTURE_LAGS_TYPE,
     LAGS_TYPE,
     RegressionModel,
-    _LikelihoodMixin,
 )
-from darts.timeseries import TimeSeries
 
 logger = get_logger(__name__)
 
 
-class LinearRegressionModel(RegressionModel, _LikelihoodMixin):
+class RandomForest(RegressionModel):
     def __init__(
         self,
         lags: Optional[LAGS_TYPE] = None,
@@ -34,14 +38,13 @@ class LinearRegressionModel(RegressionModel, _LikelihoodMixin):
         output_chunk_length: int = 1,
         output_chunk_shift: int = 0,
         add_encoders: Optional[dict] = None,
-        likelihood: Optional[str] = None,
-        quantiles: Optional[list[float]] = None,
-        random_state: Optional[int] = None,
+        n_estimators: Optional[int] = 100,
+        max_depth: Optional[int] = None,
         multi_models: Optional[bool] = True,
         use_static_covariates: bool = True,
         **kwargs,
     ):
-        """Linear regression model.
+        """Random Forest Model
 
         Parameters
         ----------
@@ -116,18 +119,11 @@ class LinearRegressionModel(RegressionModel, _LikelihoodMixin):
                     'tz': 'CET'
                 }
             ..
-        likelihood
-            Can be set to `quantile` or `poisson`. If set, the model will be probabilistic, allowing sampling at
-            prediction time. If set to `quantile`, the `sklearn.linear_model.QuantileRegressor` is used. Similarly, if
-            set to `poisson`, the `sklearn.linear_model.PoissonRegressor` is used.
-        quantiles
-            Fit the model to these quantiles if the `likelihood` is set to `quantile`.
-        random_state
-            Control the randomness of the sampling. Used as seed for
-            `numpy.random.Generator
-            <https://numpy.org/doc/stable/reference/random/generator.html#numpy.random.Generator>`_. Ignored when
-            no `likelihood` is set.
-            Default: ``None``.
+        n_estimators : int
+            The number of trees in the forest.
+        max_depth : int
+            The maximum depth of the tree. If None, then nodes are expanded until all leaves are pure or until all
+            leaves contain less than min_samples_split samples.
         multi_models
             If True, a separate model will be trained for each future lag to predict. If False, a single model
             is trained to predict all the steps in 'output_chunk_length' (features lags are shifted back by
@@ -137,16 +133,12 @@ class LinearRegressionModel(RegressionModel, _LikelihoodMixin):
             contain static covariates. If ``True``, and static covariates are available at fitting time, will enforce
             that all target `series` have the same static covariate dimensionality in ``fit()`` and ``predict()``.
         **kwargs
-            Additional keyword arguments passed to `sklearn.linear_model.LinearRegression` (by default), to
-            `sklearn.linear_model.PoissonRegressor` (if `likelihood="poisson"`), or to
-            `sklearn.linear_model.QuantileRegressor` (if `likelihood="quantile"`).
+            Additional keyword arguments passed to `sklearn.ensemble.RandomForest`.
 
         Examples
         --------
-        Deterministic forecasting, using past/future covariates (optional)
-
         >>> from darts.datasets import WeatherDataset
-        >>> from darts.models import LinearRegressionModel
+        >>> from darts.models import RandomForest
         >>> series = WeatherDataset().load()
         >>> # predicting atmospheric pressure
         >>> target = series['p (mbar)'][:100]
@@ -154,45 +146,30 @@ class LinearRegressionModel(RegressionModel, _LikelihoodMixin):
         >>> past_cov = series['rain (mm)'][:100]
         >>> # optionally, use future temperatures (pretending this component is a forecast)
         >>> future_cov = series['T (degC)'][:106]
-        >>> # predict 6 pressure values using the 12 past values of pressure and rainfall, as well as the 6 temperature
-        >>> # values corresponding to the forecasted period
-        >>> model = LinearRegressionModel(
+        >>> # random forest with 200 trees trained with MAE
+        >>> model = RandomForest(
         >>>     lags=12,
         >>>     lags_past_covariates=12,
         >>>     lags_future_covariates=[0,1,2,3,4,5],
         >>>     output_chunk_length=6,
+        >>>     n_estimators=200,
+        >>>     criterion="absolute_error",
         >>> )
         >>> model.fit(target, past_covariates=past_cov, future_covariates=future_cov)
         >>> pred = model.predict(6)
         >>> pred.values()
-        array([[1005.72085839],
-               [1005.6548696 ],
-               [1005.65403772],
-               [1005.6846175 ],
-               [1005.75753605],
-               [1005.81830675]])
+        array([[1006.29805],
+               [1006.23675],
+               [1006.17325],
+               [1006.10295],
+               [1006.06505],
+               [1006.05465]])
         """
+        self.n_estimators = n_estimators
+        self.max_depth = max_depth
         self.kwargs = kwargs
-        self._median_idx = None
-        self._model_container = None
-        self.quantiles = None
-        self._likelihood = likelihood
-        self._rng = None
-
-        # parse likelihood
-        available_likelihoods = ["quantile", "poisson"]  # to be extended
-        if likelihood is not None:
-            self._check_likelihood(likelihood, available_likelihoods)
-            self._rng = np.random.default_rng(seed=random_state)
-
-            if likelihood == "poisson":
-                model = PoissonRegressor(**kwargs)
-            if likelihood == "quantile":
-                model = QuantileRegressor(**kwargs)
-                self.quantiles, self._median_idx = self._prepare_quantiles(quantiles)
-                self._model_container = self._get_model_container()
-        else:
-            model = LinearRegression(**kwargs)
+        self.kwargs["n_estimators"] = self.n_estimators
+        self.kwargs["max_depth"] = self.max_depth
 
         super().__init__(
             lags=lags,
@@ -201,91 +178,7 @@ class LinearRegressionModel(RegressionModel, _LikelihoodMixin):
             output_chunk_length=output_chunk_length,
             output_chunk_shift=output_chunk_shift,
             add_encoders=add_encoders,
-            model=model,
             multi_models=multi_models,
+            model=RandomForestRegressor(**kwargs),
             use_static_covariates=use_static_covariates,
         )
-
-    def fit(
-        self,
-        series: Union[TimeSeries, Sequence[TimeSeries]],
-        past_covariates: Optional[Union[TimeSeries, Sequence[TimeSeries]]] = None,
-        future_covariates: Optional[Union[TimeSeries, Sequence[TimeSeries]]] = None,
-        max_samples_per_ts: Optional[int] = None,
-        n_jobs_multioutput_wrapper: Optional[int] = None,
-        sample_weight: Optional[Union[TimeSeries, Sequence[TimeSeries], str]] = None,
-        **kwargs,
-    ):
-        if self.likelihood == "quantile":
-            # set solver for linear program
-            if "solver" not in self.kwargs:
-                # set default fast solver
-                self.kwargs["solver"] = "highs"
-
-            # test solver availability with dummy problem
-            c = [1]
-            try:
-                linprog(c=c, method=self.kwargs["solver"])
-            except ValueError as ve:
-                logger.warning(
-                    f"{ve}. Upgrading scipy enables significantly faster solvers"
-                )
-                # set solver to slow legacy
-                self.kwargs["solver"] = "interior-point"
-
-            # empty model container in case of multiple calls to fit, e.g. when backtesting
-            self._model_container.clear()
-
-            for quantile in self.quantiles:
-                self.kwargs["quantile"] = quantile
-                # assign the Quantile regressor to self.model to leverage existing logic
-                self.model = QuantileRegressor(**self.kwargs)
-                super().fit(
-                    series=series,
-                    past_covariates=past_covariates,
-                    future_covariates=future_covariates,
-                    max_samples_per_ts=max_samples_per_ts,
-                    n_jobs_multioutput_wrapper=n_jobs_multioutput_wrapper,
-                    sample_weight=sample_weight,
-                    **kwargs,
-                )
-
-                self._model_container[quantile] = self.model
-
-            # replace the last trained QuantileRegressor with the dictionary of Regressors.
-            self.model = self._model_container
-
-            return self
-
-        else:
-            super().fit(
-                series=series,
-                past_covariates=past_covariates,
-                future_covariates=future_covariates,
-                max_samples_per_ts=max_samples_per_ts,
-                n_jobs_multioutput_wrapper=n_jobs_multioutput_wrapper,
-                sample_weight=sample_weight,
-                **kwargs,
-            )
-
-            return self
-
-    def _predict_and_sample(
-        self,
-        x: np.ndarray,
-        num_samples: int,
-        predict_likelihood_parameters: bool,
-        **kwargs,
-    ) -> np.ndarray:
-        if self.likelihood is not None:
-            return self._predict_and_sample_likelihood(
-                x, num_samples, self.likelihood, predict_likelihood_parameters, **kwargs
-            )
-        else:
-            return super()._predict_and_sample(
-                x, num_samples, predict_likelihood_parameters, **kwargs
-            )
-
-    @property
-    def supports_probabilistic_prediction(self) -> bool:
-        return self.likelihood is not None

@@ -16,8 +16,8 @@ if not TORCH_AVAILABLE:
     )
 import torch
 
-from darts.models.forecasting.dlinear import DLinearModel
-from darts.models.forecasting.nlinear import NLinearModel
+from darts.models.forecasting.torch.dlinear import DLinearModel
+from darts.models.forecasting.torch.nlinear import NLinearModel
 from darts.utils.likelihood_models import GaussianLikelihood
 
 

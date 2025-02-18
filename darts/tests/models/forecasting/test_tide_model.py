@@ -13,7 +13,7 @@ if not TORCH_AVAILABLE:
     )
 import torch
 
-from darts.models.forecasting.tide_model import TiDEModel
+from darts.models.forecasting.torch.tide_model import TiDEModel
 from darts.utils.likelihood_models import GaussianLikelihood
 
 

@@ -24,7 +24,9 @@ from darts.timeseries import TimeSeries, concatenate
 from darts.utils.ts_utils import series2seq
 
 if TORCH_AVAILABLE:
-    from darts.models.forecasting.torch_forecasting_model import TorchForecastingModel
+    from darts.models.forecasting.torch.torch_forecasting_model import (
+        TorchForecastingModel,
+    )
 else:
     TorchForecastingModel = None
 

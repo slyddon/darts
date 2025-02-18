@@ -38,7 +38,7 @@ from darts.models import (
     TransformerModel,
     TSMixerModel,
 )
-from darts.models.forecasting.torch_forecasting_model import (
+from darts.models.forecasting.torch.torch_forecasting_model import (
     DualCovariatesTorchModel,
     MixedCovariatesTorchModel,
     PastCovariatesTorchModel,

@@ -54,7 +54,9 @@ from darts.utils.utils import (
 )
 
 if TORCH_AVAILABLE:
-    from darts.models.forecasting.torch_forecasting_model import TorchForecastingModel
+    from darts.models.forecasting.torch.torch_forecasting_model import (
+        TorchForecastingModel,
+    )
 else:
     TorchForecastingModel = None
 

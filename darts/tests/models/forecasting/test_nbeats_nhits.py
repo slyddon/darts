@@ -9,8 +9,8 @@ if not TORCH_AVAILABLE:
         f"Torch not available. {__name__} tests will be skipped.",
         allow_module_level=True,
     )
-from darts.models.forecasting.nbeats import NBEATSModel
-from darts.models.forecasting.nhits import NHiTSModel
+from darts.models.forecasting.torch.nbeats import NBEATSModel
+from darts.models.forecasting.torch.nhits import NHiTSModel
 
 
 class TestNbeatsNhitsModel:

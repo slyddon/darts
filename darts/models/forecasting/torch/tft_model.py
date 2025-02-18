@@ -16,11 +16,11 @@ from darts import TimeSeries
 from darts.logging import get_logger, raise_if, raise_if_not, raise_log
 from darts.models.components import glu_variants, layer_norm_variants
 from darts.models.components.glu_variants import GLU_FFN
-from darts.models.forecasting.pl_forecasting_module import (
+from darts.models.forecasting.torch.pl_forecasting_module import (
     PLMixedCovariatesModule,
     io_processor,
 )
-from darts.models.forecasting.tft_submodels import (
+from darts.models.forecasting.torch.tft_submodels import (
     _GateAddNorm,
     _GatedResidualNetwork,
     _InterpretableMultiHeadAttention,
@@ -28,7 +28,9 @@ from darts.models.forecasting.tft_submodels import (
     _VariableSelectionNetwork,
     get_embedding_size,
 )
-from darts.models.forecasting.torch_forecasting_model import MixedCovariatesTorchModel
+from darts.models.forecasting.torch.torch_forecasting_model import (
+    MixedCovariatesTorchModel,
+)
 from darts.utils.data import (
     MixedCovariatesSequentialDataset,
     MixedCovariatesTrainingDataset,

@@ -38,7 +38,9 @@ if TORCH_AVAILABLE:
         TransformerModel,
         TSMixerModel,
     )
-    from darts.models.forecasting.torch_forecasting_model import TorchForecastingModel
+    from darts.models.forecasting.torch.torch_forecasting_model import (
+        TorchForecastingModel,
+    )
     from darts.utils.likelihood_models import (
         BernoulliLikelihood,
         BetaLikelihood,

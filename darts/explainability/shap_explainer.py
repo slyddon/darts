@@ -37,7 +37,7 @@ from darts import TimeSeries
 from darts.explainability.explainability import _ForecastingModelExplainer
 from darts.explainability.explainability_result import ShapExplainabilityResult
 from darts.logging import get_logger, raise_if, raise_log
-from darts.models.forecasting.regression_model import RegressionModel
+from darts.models.forecasting.regression.regression_model import RegressionModel
 from darts.utils.data.tabularization import create_lagged_prediction_data
 
 logger = get_logger(__name__)

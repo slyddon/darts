@@ -1,55 +1,34 @@
 """
-XGBoost Model
--------------
+LightGBM Model
+--------------
 
-Regression model based on XGBoost.
+This is a LightGBM implementation of Gradient Boosted Trees algorithm.
 
 This implementation comes with the ability to produce probabilistic forecasts.
+
+To enable LightGBM support in Darts, follow the detailed install instructions for LightGBM in the INSTALL:
+https://github.com/unit8co/darts/blob/master/INSTALL.md
 """
 
 from collections.abc import Sequence
-from functools import partial
 from typing import Optional, Union
 
+import lightgbm as lgb
 import numpy as np
-import xgboost as xgb
 
-from darts.logging import get_logger, raise_if_not
-from darts.models.forecasting.regression_model import (
+from darts.logging import get_logger
+from darts.models.forecasting.regression.regression_model import (
     FUTURE_LAGS_TYPE,
     LAGS_TYPE,
-    RegressionModel,
+    RegressionModelWithCategoricalCovariates,
     _LikelihoodMixin,
 )
 from darts.timeseries import TimeSeries
 
 logger = get_logger(__name__)
 
-# Check whether we are running xgboost >= 2.0.0 for quantile regression
-tokens = xgb.__version__.split(".")
-xgb_200_or_above = int(tokens[0]) >= 2
 
-
-def xgb_quantile_loss(labels: np.ndarray, preds: np.ndarray, quantile: float):
-    """Custom loss function for XGBoost to compute quantile loss gradient.
-
-    Inspired from: https://gist.github.com/Nikolay-Lysenko/06769d701c1d9c9acb9a66f2f9d7a6c7
-
-    This computes the gradient of the pinball loss between predictions and target labels.
-    """
-    raise_if_not(0 <= quantile <= 1, "Quantile must be between 0 and 1.", logger)
-
-    errors = preds - labels
-    left_mask = errors < 0
-    right_mask = errors > 0
-
-    grad = -quantile * left_mask + (1 - quantile) * right_mask
-    hess = np.ones_like(preds)
-
-    return grad, hess
-
-
-class XGBModel(RegressionModel, _LikelihoodMixin):
+class LightGBMModel(RegressionModelWithCategoricalCovariates, _LikelihoodMixin):
     def __init__(
         self,
         lags: Optional[LAGS_TYPE] = None,
@@ -63,9 +42,12 @@ class XGBModel(RegressionModel, _LikelihoodMixin):
         random_state: Optional[int] = None,
         multi_models: Optional[bool] = True,
         use_static_covariates: bool = True,
+        categorical_past_covariates: Optional[Union[str, list[str]]] = None,
+        categorical_future_covariates: Optional[Union[str, list[str]]] = None,
+        categorical_static_covariates: Optional[Union[str, list[str]]] = None,
         **kwargs,
     ):
-        """XGBoost Model
+        """LGBM Model
 
         Parameters
         ----------
@@ -141,7 +123,7 @@ class XGBModel(RegressionModel, _LikelihoodMixin):
                 }
             ..
         likelihood
-            Can be set to `poisson` or `quantile`. If set, the model will be probabilistic, allowing sampling at
+            Can be set to `quantile` or `poisson`. If set, the model will be probabilistic, allowing sampling at
             prediction time. This will overwrite any `objective` parameter.
         quantiles
             Fit the model to these quantiles if the `likelihood` is set to `quantile`.
@@ -156,15 +138,27 @@ class XGBModel(RegressionModel, _LikelihoodMixin):
             Whether the model should use static covariate information in case the input `series` passed to ``fit()``
             contain static covariates. If ``True``, and static covariates are available at fitting time, will enforce
             that all target `series` have the same static covariate dimensionality in ``fit()`` and ``predict()``.
+        categorical_past_covariates
+            Optionally, component name or list of component names specifying the past covariates that should be treated
+            as categorical by the underlying `lightgbm.LightGBMRegressor`. It's recommended that the components that
+            are treated as categorical are integer-encoded. For more information on how LightGBM handles categorical
+            features, visit: `Categorical feature support documentation
+            <https://lightgbm.readthedocs.io/en/latest/Features.html#optimal-split-for-categorical-features>`_
+        categorical_future_covariates
+            Optionally, component name or list of component names specifying the future covariates that should be
+            treated as categorical by the underlying `lightgbm.LightGBMRegressor`. It's recommended that the components
+            that are treated as categorical are integer-encoded.
+        categorical_static_covariates
+            Optionally, string or list of strings specifying the static covariates that should be treated as categorical
+            by the underlying `lightgbm.LightGBMRegressor`. It's recommended that the static covariates that are
+            treated as categorical are integer-encoded.
         **kwargs
-            Additional keyword arguments passed to `xgb.XGBRegressor`.
+            Additional keyword arguments passed to `lightgbm.LGBRegressor`.
 
         Examples
         --------
-        Deterministic forecasting, using past/future covariates (optional)
-
         >>> from darts.datasets import WeatherDataset
-        >>> from darts.models import XGBModel
+        >>> from darts.models import LightGBMModel
         >>> series = WeatherDataset().load()
         >>> # predicting atmospheric pressure
         >>> target = series['p (mbar)'][:100]
@@ -174,21 +168,22 @@ class XGBModel(RegressionModel, _LikelihoodMixin):
         >>> future_cov = series['T (degC)'][:106]
         >>> # predict 6 pressure values using the 12 past values of pressure and rainfall, as well as the 6 temperature
         >>> # values corresponding to the forecasted period
-        >>> model = XGBModel(
+        >>> model = LightGBMModel(
         >>>     lags=12,
         >>>     lags_past_covariates=12,
         >>>     lags_future_covariates=[0,1,2,3,4,5],
         >>>     output_chunk_length=6,
+        >>>     verbose=-1
         >>> )
         >>> model.fit(target, past_covariates=past_cov, future_covariates=future_cov)
         >>> pred = model.predict(6)
         >>> pred.values()
-        array([[1005.9185 ],
-               [1005.8315 ],
-               [1005.7878 ],
-               [1005.72626],
-               [1005.7475 ],
-               [1005.76074]])
+        array([[1006.85376674],
+               [1006.83998586],
+               [1006.63884831],
+               [1006.57201255],
+               [1006.52290556],
+               [1006.39550065]])
         """
         kwargs["random_state"] = random_state  # seed for tree learner
         self.kwargs = kwargs
@@ -199,19 +194,15 @@ class XGBModel(RegressionModel, _LikelihoodMixin):
         self._rng = None
 
         # parse likelihood
-        available_likelihoods = ["poisson", "quantile"]  # to be extended
+        available_likelihoods = ["quantile", "poisson"]  # to be extended
         if likelihood is not None:
             self._check_likelihood(likelihood, available_likelihoods)
-            if likelihood in {"poisson"}:
-                self.kwargs["objective"] = f"count:{likelihood}"
-            elif likelihood == "quantile":
-                if xgb_200_or_above:
-                    # leverage built-in Quantile Regression
-                    self.kwargs["objective"] = "reg:quantileerror"
+            self.kwargs["objective"] = likelihood
+            self._rng = np.random.default_rng(seed=random_state)  # seed for sampling
+
+            if likelihood == "quantile":
                 self.quantiles, self._median_idx = self._prepare_quantiles(quantiles)
                 self._model_container = self._get_model_container()
-
-            self._rng = np.random.default_rng(seed=random_state)  # seed for sampling
 
         super().__init__(
             lags=lags,
@@ -221,8 +212,11 @@ class XGBModel(RegressionModel, _LikelihoodMixin):
             output_chunk_shift=output_chunk_shift,
             add_encoders=add_encoders,
             multi_models=multi_models,
-            model=xgb.XGBRegressor(**self.kwargs),
+            model=lgb.LGBMRegressor(**self.kwargs),
             use_static_covariates=use_static_covariates,
+            categorical_past_covariates=categorical_past_covariates,
+            categorical_future_covariates=categorical_future_covariates,
+            categorical_static_covariates=categorical_static_covariates,
         )
 
     def fit(
@@ -256,7 +250,7 @@ class XGBModel(RegressionModel, _LikelihoodMixin):
             TimeSeries or Sequence[TimeSeries] object containing the target values for evaluation dataset
         val_past_covariates
             Optionally, a series or sequence of series specifying past-observed covariates for evaluation dataset
-        val_future_covariates :
+        val_future_covariates : Union[TimeSeries, Sequence[TimeSeries]]
             Optionally, a series or sequence of series specifying future-known covariates for evaluation dataset
         max_samples_per_ts
             This is an integer upper bound on the number of tuples that can be produced
@@ -280,21 +274,15 @@ class XGBModel(RegressionModel, _LikelihoodMixin):
             are extracted from the end of the global weights. This gives a common time weighting across all series.
         val_sample_weight
             Same as for `sample_weight` but for the evaluation dataset.
-        **kwargs
-            Additional kwargs passed to `xgb.XGBRegressor.fit()`
+         **kwargs
+            Additional kwargs passed to `lightgbm.LGBRegressor.fit()`
         """
-        # TODO: XGBRegressor supports multi quantile reqression which we could leverage in the future
-        #  see https://xgboost.readthedocs.io/en/latest/python/examples/quantile_regression.html
         if self.likelihood == "quantile":
             # empty model container in case of multiple calls to fit, e.g. when backtesting
             self._model_container.clear()
             for quantile in self.quantiles:
-                if xgb_200_or_above:
-                    self.kwargs["quantile_alpha"] = quantile
-                else:
-                    objective = partial(xgb_quantile_loss, quantile=quantile)
-                    self.kwargs["objective"] = objective
-                self.model = xgb.XGBRegressor(**self.kwargs)
+                self.kwargs["alpha"] = quantile
+                self.model = lgb.LGBMRegressor(**self.kwargs)
                 super().fit(
                     series=series,
                     past_covariates=past_covariates,
@@ -353,13 +341,12 @@ class XGBModel(RegressionModel, _LikelihoodMixin):
 
     @property
     def val_set_params(self) -> tuple[Optional[str], Optional[str]]:
-        return "eval_set", "sample_weight_eval_set"
+        return "eval_set", "eval_sample_weight"
 
     @property
     def min_train_series_length(self) -> int:
-        # XGBModel  requires a minimum of 2 training samples,
-        # therefore the min_train_series_length should be one
-        # more than for other regression models
+        # LightGBM requires a minimum of 2 train samples, therefore the min_train_series_length should be one more than
+        # for other regression models
         return max(
             3,
             (

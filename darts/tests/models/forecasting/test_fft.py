@@ -1,6 +1,6 @@
 import numpy as np
 
-from darts.models.forecasting.fft import _find_relevant_timestamp_attributes
+from darts.models.forecasting.statistical.fft import _find_relevant_timestamp_attributes
 from darts.utils import timeseries_generation as tg
 from darts.utils.utils import freqs
 

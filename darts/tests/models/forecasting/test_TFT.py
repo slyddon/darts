@@ -15,8 +15,8 @@ if not TORCH_AVAILABLE:
 import torch.nn as nn
 from torch.nn import MSELoss
 
-from darts.models.forecasting.tft_model import TFTModel
-from darts.models.forecasting.tft_submodels import get_embedding_size
+from darts.models.forecasting.torch.tft_model import TFTModel
+from darts.models.forecasting.torch.tft_submodels import get_embedding_size
 from darts.utils.likelihood_models import QuantileRegression
 
 

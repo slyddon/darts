@@ -11,7 +11,7 @@ if not TORCH_AVAILABLE:
     )
 import torch
 
-from darts.models.forecasting.tcn_model import TCNModel
+from darts.models.forecasting.torch.tcn_model import TCNModel
 
 
 class TestTCNModel:
